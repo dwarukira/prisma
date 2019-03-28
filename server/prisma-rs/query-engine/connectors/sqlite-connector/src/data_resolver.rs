@@ -23,10 +23,11 @@ where
 impl DataResolver for SqlResolver<Sqlite> {
     fn get_node_by_where(
         &self,
-        node_selector: &NodeSelector,
+        node_selector: NodeSelector,
         selected_fields: &SelectedFields,
     ) -> ConnectorResult<Option<SingleNode>> {
-        let (db_name, query) = QueryBuilder::get_node_by_where(node_selector, selected_fields);
+        let (db_name, query) = QueryBuilder::get_nodes(node_selector.field.model(), node_selector, selected_fields);
+
         let scalar_fields = selected_fields.scalar_non_list();
         let field_names = scalar_fields.iter().map(|f| f.name.clone()).collect();
 
@@ -43,15 +44,15 @@ impl DataResolver for SqlResolver<Sqlite> {
         &self,
         model: ModelRef,
         query_arguments: QueryArguments,
-        selected_fields: SelectedFields,
+        selected_fields: &SelectedFields,
     ) -> ConnectorResult<ManyNodes> {
         let scalar_fields = selected_fields.scalar_non_list();
         let field_names = scalar_fields.iter().map(|f| f.name.clone()).collect();
-        let (db_name, query) = QueryBuilder::get_nodes(model, query_arguments, &selected_fields);
+        let (db_name, query) = QueryBuilder::get_nodes(model, query_arguments, selected_fields);
 
         let nodes = self
             .database_executor
-            .with_rows(query, db_name, |row| Sqlite::read_row(row, &selected_fields))?;
+            .with_rows(query, db_name, |row| Sqlite::read_row(row, selected_fields))?;
 
         Ok(ManyNodes { nodes, field_names })
     }

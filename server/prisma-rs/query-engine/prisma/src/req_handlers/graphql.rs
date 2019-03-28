@@ -1,6 +1,6 @@
 use super::{PrismaRequest, RequestHandler};
-use crate::{context::PrismaContext, error::PrismaError, schema::Validatable, PrismaResult};
-use core::{MultiPrismaQueryResult, PrismaQuery, PrismaQueryResult, RootQueryBuilder, SinglePrismaQueryResult};
+use crate::{json, context::PrismaContext, error::PrismaError, schema::Validatable, PrismaResult};
+use core::{MultiPrismaQueryResult, PrismaQuery, PrismaQueryResult, RootQueryBuilder};
 use graphql_parser as gql;
 use prisma_models::{GraphqlId, PrismaValue, SingleNode};
 use serde::{Deserialize, Serialize};
@@ -60,14 +60,18 @@ fn handle_safely(req: PrismaRequest<GraphQlBody>, ctx: &PrismaContext) -> Prisma
     let queries: Vec<PrismaQuery> = qb.build()?;
     let results = dbg!(ctx.query_executor.execute(&queries))?;
 
-    Ok(json_envelope(
+    #[cfg(not(feature = "newjson"))]
+    return Ok(json_envelope(
         "data",
         results
             .iter()
             .fold(Ok(Map::new()), |acc: PrismaResult<JsonMap>, result| {
                 acc.map(|mut a| serialize_tree(&mut a, result).map(|_| a))?
             })?,
-    ))
+    ));
+
+    #[cfg(feature = "newjson")]
+    return Ok(json::build(results.first().unwrap()).convert());
 }
 
 /// Recursively serialize query results
@@ -103,8 +107,6 @@ fn serialize_many_nodes(many_nodes: &MultiPrismaQueryResult) -> PrismaResult<Jso
         .map(|vec| {
             vec.into_iter()
                 .fold(Ok(JsonMap::new()), |mut map: PrismaResult<JsonMap>, (name, value)| {
-
-
                     map.as_mut().unwrap().insert(name, serialize_prisma_value(&value)?);
                     map
                 })
@@ -112,6 +114,46 @@ fn serialize_many_nodes(many_nodes: &MultiPrismaQueryResult) -> PrismaResult<Jso
         .map(|map| Value::Object(map.unwrap()))
         .collect())
 }
+
+// /// This function is a bit magic
+// ///
+// /// First we get the name-value pairs on the main query from a set of nodes.
+// /// After that we push them into a map that is indexed by their `id` field.
+// /// This is so that when we go through the nested queries later,
+// /// we can associate data correctly.
+// /// After that is done we squash the map-values into a Vec agan and return that as json
+// ///
+// // FIXME: Don't panic!
+// #[allow(unused_variables)]
+// fn serialize_many_nodes(many_nodes: &MultiPrismaQueryResult) -> PrismaResult<JsonVec> {
+//     Ok(many_nodes
+//         .result
+//         .as_pairs()
+//         .into_iter()
+//         .fold(JsonMap::new(), |mut map, vec| {
+//             map.insert(
+//                 vec.iter()
+//                     .filter_map(|i| i.is_id())
+//                     .filter_map(|i| match i {
+//                         PrismaValue::String(s) => Some(s.clone()),
+//                         _ => None,
+//                     })
+//                     .nth(0)
+//                     .unwrap(),
+//                 Value::Object(vec.iter().fold(JsonMap::new(), |mut map, (name, value)| {
+//                     map.insert(name.clone(), serialize_prisma_value(&value).unwrap());
+//                     map
+//                 })),
+//             );
+
+//             map
+//         })
+//         .into_iter()
+//         .fold(JsonVec::new(), |mut vec, (_, v)| {
+//             vec.push(v);
+//             vec
+//         }))
+// }
 
 fn serialize_single_node(single_node: &SingleNode) -> PrismaResult<JsonMap> {
     let mut serde_map = Map::new();
@@ -167,18 +209,18 @@ fn json_envelope(id: &str, map: serde_json::Map<String, Value>) -> Value {
     Value::Object(envelope)
 }
 
-#[allow(dead_code)]
-fn get_result_name(result: &PrismaQueryResult) -> String {
-    match result {
-        PrismaQueryResult::Single(SinglePrismaQueryResult {
-            name,
-            result: _,
-            nested: _,
-        }) => name.clone(),
-        PrismaQueryResult::Multi(MultiPrismaQueryResult {
-            name,
-            result: _,
-            nested: _,
-        }) => name.clone(),
-    }
-}
+// #[allow(dead_code)]
+// fn get_result_name(result: &PrismaQueryResult) -> String {
+//     match result {
+//         PrismaQueryResult::Single(SinglePrismaQueryResult {
+//             name,
+//             result: _,
+//             nested: _,
+//         }) => name.clone(),
+//         PrismaQueryResult::Multi(MultiPrismaQueryResult {
+//             name,
+//             result: _,
+//             nested: _,
+//         }) => name.clone(),
+//     }
+// }
